@@ -66,7 +66,7 @@ module.exports = async (req, res) => {
 
     const r = await fetch(u, {
       headers: { 'User-Agent': UA, 'Accept': 'text/html,*/*', 'Accept-Language': 'he,en;q=0.8' },
-      redirect: 'follow', signal: AbortSignal.timeout(15000),
+      redirect: 'follow', signal: AbortSignal.timeout(25000),
     });
     if (!r.ok) throw new Error('האתר החזיר שגיאה ' + r.status);
     const html = (await r.text()).slice(0, 8_000_000);
