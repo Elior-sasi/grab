@@ -73,6 +73,12 @@ h1{font-size:24px;margin:0;font-weight:700;letter-spacing:.3px}
 
 .empty{margin-top:40px;text-align:center;color:var(--dim);font-size:14px;line-height:1.7}
 .empty svg{width:56px;height:56px;opacity:.35;margin-bottom:8px}
+.sheet{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:flex-end;z-index:8}
+.sheet.show{display:flex}
+.sheet-in{background:var(--card);border-top:1px solid var(--line);border-radius:22px 22px 0 0;padding:22px 18px calc(env(safe-area-inset-bottom) + 18px);width:100%;max-height:90dvh;overflow:auto}
+.sheet h2{margin:0 0 4px;font-size:20px}
+.sheet ol{margin:0 0 12px;padding-inline-start:20px;line-height:1.8;font-size:15px}
+#bmCode{display:none;width:100%;height:90px;margin-top:10px;background:var(--bg);color:var(--dim);border:1px solid var(--line);border-radius:10px;font-size:11px;direction:ltr}
 .toast{position:fixed;top:calc(env(safe-area-inset-top) + 12px);left:50%;transform:translateX(-50%) translateY(-120%);background:var(--card2);border:1px solid var(--line);padding:10px 16px;border-radius:12px;font-size:14px;transition:transform .25s;z-index:9;max-width:90vw}
 .toast.show{transform:translateX(-50%) translateY(0)}
 </style>
@@ -96,6 +102,25 @@ h1{font-size:24px;margin:0;font-weight:700;letter-spacing:.3px}
     <div>הדבק כתובת של אתר ולחץ סרוק.<br>אפשר לבחור תמונות ולשמור אותן לאפליקציית קבצים.</div>
   </div>
 </div>
+
+<button class="link" id="bmOpen" style="display:block;margin:28px auto 0">אתר לא נסרק? הוסף את Grab ל-Safari</button>
+
+<div class="sheet" id="bm"><div class="sheet-in">
+  <h2>Grab בתוך Safari</h2>
+  <p class="sub" style="margin:0 0 14px">לאתרים שחוסמים סריקה. Grab רץ ישירות על הדף שפתוח אצלך.</p>
+  <ol>
+    <li>לחץ <b>העתק קוד</b> למטה.</li>
+    <li>ב-Safari, על כל דף שהוא: שיתוף ← <b>הוסף סימניה</b> ← שמור.</li>
+    <li>פתח את הסימניות ← <b>ערוך</b> ← בחר את הסימניה החדשה.</li>
+    <li>שנה את השם ל-<b>Grab</b>, ובשורת הכתובת מחק הכל והדבק את הקוד.</li>
+  </ol>
+  <p class="sub">שימוש: בדף עם תמונות, לחץ על שורת הכתובת, הקלד <b>Grab</b> ובחר את הסימניה.</p>
+  <textarea id="bmCode" readonly></textarea>
+  <div style="display:flex;gap:8px;margin-top:14px">
+    <button class="btn" id="bmCopy" style="flex:1">העתק קוד</button>
+    <button class="btn ghost" id="bmClose">סגור</button>
+  </div>
+</div></div>
 
 <div class="progress" id="prog"><i></i></div>
 <div class="dock hide" id="dock">
@@ -174,8 +199,10 @@ function render(){
       c.querySelector('.dim').textContent = it.w && it.h ? it.w+'×'+it.h : extOf(it.url).toUpperCase();
       if (it.w && it.h && it.w*it.h < 400) { it.failed = true; } // tracking pixels
       refresh(); };
-    img.onerror = () => { it.failed = true; refresh(); };
-    img.src = proxied(it.url);
+    const first = state.direct ? it.url : proxied(it.url);
+    const second = state.direct ? proxied(it.url) : it.url;
+    img.onerror = () => { if (img.src !== second && !img._retry) { img._retry = 1; img.src = second; } else { it.failed = true; refresh(); } };
+    img.src = first;
     c.onclick = () => { it.sel = !it.sel; ready = null; refresh(); };
     it.el = c; grid.appendChild(c);
   }
@@ -222,8 +249,11 @@ async function collect(){
     while(queue.length){
       const it = queue.shift();
       try{
-        const r = await fetch(proxied(it.url)); if(!r.ok) throw 0;
-        const b = await r.blob();
+        let b = null;
+        for (const src of [proxied(it.url), it.url]) {
+          try { const r = await fetch(src, { mode: 'cors' }); if (r.ok) { const x = await r.blob(); if (x.size) { b = x; break; } } } catch {}
+        }
+        if (!b) throw 0;
         files.push({ it, file: new File([b], nameFor(it, b, used), { type: b.type || 'image/jpeg' }) });
       }catch{}
       done++; fill.style.width = (done/list.length*100)+'%';
@@ -284,8 +314,29 @@ $('#saveFiles').onclick = () => action('files');
 $('#saveZip').onclick = () => action('zip');
 
 // open with ?url=
+function fromHash(){
+  const m = location.hash.match(/^#d=(.*)$/s); if (!m) return false;
+  try{
+    const j = JSON.parse(decodeURIComponent(m[1]));
+    history.replaceState(null,'',location.pathname);
+    state.page = j.page; state.title = j.title; state.direct = true;
+    $('#url').value = j.page;
+    state.items = (j.images||[]).map((x,i)=>({ ...x, id:i, w:0, h:0, ok:false, failed:false, sel:true }));
+    render(); return true;
+  }catch{ return false; }
+}
 const q = new URLSearchParams(location.search).get('url');
-if (q){ $('#url').value = q; scan(); }
+if (!fromHash() && q){ $('#url').value = q; scan(); }
+window.addEventListener('hashchange', fromHash);
+
+/* ---------- Safari bookmark (runs on the open page) ---------- */
+const BM = "javascript:(()=>{const s=new Set,a=u=>{try{u=new URL(u,location.href).href;if(/^https?:/.test(u))s.add(u.split('#')[0])}catch(e){}};document.querySelectorAll('img,source').forEach(e=>{['src','data-src','data-lazy-src','data-original','data-url'].forEach(k=>{const v=e.getAttribute(k);v&&a(v)});['srcset','data-srcset'].forEach(k=>{const v=e.getAttribute(k);v&&v.split(/,\\s+/).forEach(p=>a(p.trim().split(/\\s+/)[0]))});e.currentSrc&&a(e.currentSrc)});document.querySelectorAll('body *').forEach(e=>{const b=getComputedStyle(e).backgroundImage;b&&b!=='none'&&b.replace(/url\\([\"']?([^\"')]+)[\"']?\\)/g,(m,u)=>a(u))});document.querySelectorAll('a[href]').forEach(e=>/\\.(jpe?g|png|gif|webp|avif)(\\?|$)/i.test(e.href)&&a(e.href));document.querySelectorAll('meta[property^=\"og:image\"]').forEach(e=>a(e.content));const d={page:location.href,title:document.title,images:[...s].map(url=>({url,source:'page'}))};location.href='" + location.origin + "/#d='+encodeURIComponent(JSON.stringify(d))})()";
+$('#bmOpen').onclick = () => $('#bm').classList.add('show');
+$('#bmClose').onclick = () => $('#bm').classList.remove('show');
+$('#bmCopy').onclick = async () => {
+  try { await navigator.clipboard.writeText(BM); $('#bmCopy').textContent = 'הועתק ✓'; }
+  catch { const t = $('#bmCode'); t.value = BM; t.style.display='block'; t.select(); toast('סמן והעתק ידנית'); }
+};
 </script>
 </body>
 </html>
